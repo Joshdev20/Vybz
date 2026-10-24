@@ -8,11 +8,23 @@ import { blockedUserIds, hasBlocked } from '../lib/safety.js';
 import { areConnected, getConnection } from '../lib/connections.js';
 import { AVATAR_PRESETS, isPresetAvatar } from '../lib/avatars.js';
 import { publicPreferences } from '../lib/preferences.js';
+import { publicUser } from '../lib/auth.js';
 import { screenText } from '../lib/safety.js';
 
 const router = Router();
 
 const PRESET_AVATARS = AVATAR_PRESETS;
+
+/** `languages` is stored as a JSON string; the client expects an array. */
+function parseLanguages(raw) {
+  if (Array.isArray(raw)) return raw;
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 router.get(
   '/me',
@@ -61,7 +73,13 @@ router.get(
       day,
     );
     res.json({
-      profile,
+      // The profile screen renders identity from `user`, so it must be present.
+      user: publicUser(req.user),
+      profile: {
+        ...profile,
+        languages: parseLanguages(profile?.languages),
+        showRegion: Boolean(profile?.show_region),
+      },
       preferences: publicPreferences(prefs),
       statistics: stats,
       progress: levelProgress(stats?.xp || 0),

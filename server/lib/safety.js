@@ -242,7 +242,12 @@ const HARD_BLOCK_PATTERNS = [
 const CONTACT_PATTERNS = [
   /\b[\w.+-]+@[\w-]+\.[\w.]{2,}\b/,
   /\b(?:\+?\d[\s-]?){9,}\b/,
-  /\b(?:wa|whatsapp|snap|telegram|insta|instagram)\s*[:@]?\s*\w+/i,
+  // Platform names must match as whole words: a prefix match would reject
+  // ordinary sentences ("I was thinking", "water", "watching").
+  /\b(?:whatsapp|snapchat|telegram|instagram|wa\.me)\b/i,
+  // Short forms are only meaningful when followed by a handle separator,
+  // so "snapshot" and "instantly" are left alone.
+  /\b(?:snap|insta|wa|tg)\b\s*[:@/]/i,
 ];
 
 /**

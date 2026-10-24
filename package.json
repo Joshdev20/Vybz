@@ -16,7 +16,8 @@
     "test": "node tests/e2e.mjs",
     "test:api": "node tests/verify-api.mjs",
     "test:ui": "node tests/ui-realtime.mjs",
-    "test:all": "node tests/e2e.mjs && node tests/verify-api.mjs && node tests/ui-realtime.mjs"
+    "test:all": "node tests/e2e.mjs && node tests/verify-api.mjs && node tests/ui-realtime.mjs",
+    "test:responsive": "node tests/responsive-audit.mjs"
   },
   "dependencies": {
     "express": "^4.21.2",
