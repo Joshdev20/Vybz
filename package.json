@@ -1,0 +1,25 @@
+{
+  "name": "vybz",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VYBZ - Meet through play. Connect through chemistry. Real-time social gaming platform (18+).",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "migrate": "node server/scripts/migrate.js",
+    "seed": "node server/scripts/seed.js",
+    "setup": "node server/scripts/migrate.js && node server/scripts/seed.js",
+    "test": "node tests/e2e.mjs",
+    "test:api": "node tests/verify-api.mjs",
+    "test:ui": "node tests/ui-realtime.mjs",
+    "test:all": "node tests/e2e.mjs && node tests/verify-api.mjs && node tests/ui-realtime.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  }
+}
