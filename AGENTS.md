@@ -28,9 +28,19 @@ npm run dev        # watch mode
 npm test           # tests/e2e.mjs        behavioural
 npm run test:api   # tests/verify-api.mjs API contract
 npm run test:ui    # tests/ui-realtime.mjs two browsers
+npm run test:responsive  # tests/responsive-audit.mjs layout at 320-1440px
 ```
 
-The test suites require a **running server**. `test:ui` requires Chromium.
+The test suites require a **running server**. `test:ui` and `test:responsive`
+require Chromium.
+
+### Responsive layout rules
+
+`body` sets `overflow-x: hidden`, so horizontal overflow is invisible: a label
+that is too wide is simply clipped, which looks like content running off both
+edges. When adding a grid or flex container, give its children `min-width: 0`
+and let text wrap, rather than relying on `nowrap`. `npm run test:responsive`
+catches both viewport overflow and content wider than its own box.
 
 ## Layout
 
