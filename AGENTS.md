@@ -34,6 +34,13 @@ npm run test:responsive  # tests/responsive-audit.mjs layout at 320-1440px
 The test suites require a **running server**. `test:ui` and `test:responsive`
 require Chromium.
 
+### Mobile text fields
+
+Keep text controls at 16px or larger. On iOS Safari a focused `input`/`textarea`
+under 16px makes the browser zoom the page, which looks exactly like horizontal
+overflow. Also reset `appearance` on `.input`/`.textarea`: Safari's native field
+styling carries its own padding and radius and ignores the box model.
+
 ### Responsive layout rules
 
 `body` sets `overflow-x: hidden`, so horizontal overflow is invisible: a label
