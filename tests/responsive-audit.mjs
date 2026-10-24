@@ -2,50 +2,58 @@
  * Responsive regression test.
  *
  * Loads every route at several viewport widths in a real browser and fails if:
- *   - any element's box sticks out past the viewport, or
- *   - any content is clipped by an ancestor's `overflow: hidden`.
+ *   - any element's box sticks out past the viewport,
+ *   - any content is wider than its own box, or
+ *   - any text field is under 16px, which makes iOS Safari zoom the page on
+ *     focus and makes the layout look like it overflows.
  *
- * This guards the class of bug where a fixed width, or a grid/flex child that
- * defaults to `min-width: auto`, silently widens the page on a small screen.
+ * Two isolated browsers are used: one with no session, to check the screens a
+ * logged-out visitor sees, and one with a session for the app itself. Sharing a
+ * browser between the two would leak cookies and silently skip the public pages.
  *
- * It also asserts each route actually rendered its own content, so a redirect
- * to the login page cannot pass as a clean layout.
+ * It also asserts each route rendered its own content, so a redirect to the
+ * login page cannot pass as a clean layout.
  *
  *   npm run test:responsive        (server must be running)
  *   ROUTES=/profile node tests/responsive-audit.mjs
  */
 import { spawn } from 'node:child_process';
 import http from 'node:http';
-import { rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 
 const BASE = process.env.BASE || 'http://localhost:12000';
 const CHROME = process.env.CHROME || '/usr/bin/chromium';
-const PORT = Number(process.env.CDP_PORT || 9250);
-
 const WIDTHS = (process.env.WIDTHS || '320,360,390,414,768,1024,1440').split(',').map(Number);
 
-/** Route plus a phrase that must appear for the page to count as rendered. */
-const ROUTES = (
+/** Public routes, loaded with no session. These only render when logged out. */
+const PUBLIC_ROUTES = parseRoutes(
+  process.env.PUBLIC_ROUTES || '/login|Log in,/register|Create your account,/onboarding|',
+);
+
+/** Routes requiring a session, plus a phrase that must appear once rendered. */
+const ROUTES = parseRoutes(
   process.env.ROUTES ||
-  [
-    '/play|Play',
-    '/discover|Discover',
-    '/inbox|Inbox',
-    '/connections|Connection',
-    '/profile|Profile',
-    '/signals|Secret Signal',
-    '/rooms|Spill It',
-    '/blind-vibe|Blind Vibe',
-    // /login is deliberately excluded: an authenticated session redirects it to
-    // /play, so it cannot be asserted from within this logged-in sweep.
-  ].join(',')
-)
-  .split(',')
-  .map((entry) => {
-    const [path, expect] = entry.split('|');
-    return { path: path.trim(), expect: (expect || '').trim() };
-  })
-  .filter((r) => r.path);
+    [
+      '/play|Play',
+      '/discover|Discover',
+      '/inbox|Inbox',
+      '/connections|Connection',
+      '/profile|Profile',
+      '/signals|Secret Signal',
+      '/rooms|Spill It',
+      '/blind-vibe|Blind Vibe',
+    ].join(','),
+);
+
+function parseRoutes(value) {
+  return value
+    .split(',')
+    .map((entry) => {
+      const [path, expect] = entry.split('|');
+      return { path: (path || '').trim(), expect: (expect || '').trim() };
+    })
+    .filter((r) => r.path);
+}
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -71,8 +79,16 @@ async function session() {
   return cookie;
 }
 
-async function launch() {
-  rmSync('/tmp/vybz-audit-profile', { recursive: true, force: true });
+/**
+ * Starts Chromium with an isolated profile and returns its debugger endpoint.
+ *
+ * The port is allocated by Chromium (`--remote-debugging-port=0`) and read back
+ * from the profile directory, so concurrent runs cannot collide on a fixed port
+ * and accidentally attach to a browser from an earlier run.
+ */
+async function launch(tag) {
+  const dir = `/tmp/vybz-audit-${tag}-${process.pid}`;
+  rmSync(dir, { recursive: true, force: true });
   const proc = spawn(
     CHROME,
     [
@@ -80,20 +96,42 @@ async function launch() {
       '--no-sandbox',
       '--disable-gpu',
       '--disable-dev-shm-usage',
-      `--remote-debugging-port=${PORT}`,
-      '--user-data-dir=/tmp/vybz-audit-profile',
+      '--remote-debugging-port=0',
+      `--user-data-dir=${dir}`,
       'about:blank',
     ],
-    { stdio: 'ignore' },
+    { stdio: 'ignore', detached: true },
   );
-  await wait(2600);
-  return proc;
+  // Detached so the whole process group can be killed, leaving no stale browser
+  // holding a port for the next run.
+  const kill = () => {
+    try {
+      process.kill(-proc.pid, 'SIGKILL');
+    } catch {
+      proc.kill('SIGKILL');
+    }
+  };
+
+  let port;
+  for (let i = 0; i < 60 && !port; i++) {
+    await wait(250);
+    try {
+      port = Number(readFileSync(`${dir}/DevToolsActivePort`, 'utf8').split('\n')[0]);
+    } catch {
+      /* not ready yet */
+    }
+  }
+  if (!port) {
+    kill();
+    throw new Error('Chromium did not expose a debugging port');
+  }
+  return { port, kill };
 }
 
-async function attach(url, cookie) {
+async function attach(port, cookie) {
   const created = await new Promise((resolve, reject) => {
     const req = http.request(
-      { host: '127.0.0.1', port: PORT, path: `/json/new?${encodeURIComponent(url)}`, method: 'PUT' },
+      { host: '127.0.0.1', port, path: `/json/new?${encodeURIComponent(BASE)}`, method: 'PUT' },
       (res) => {
         let body = '';
         res.on('data', (c) => (body += c));
@@ -126,7 +164,6 @@ async function attach(url, cookie) {
   await send('Page.enable');
   await send('Network.enable');
 
-  // Inject the session before any page load so the SPA boots authenticated.
   if (cookie) {
     const [name, value] = cookie.split('=');
     await send('Network.setCookie', {
@@ -146,7 +183,7 @@ async function attach(url, cookie) {
   return { send, evaluate };
 }
 
-/** Finds elements that overflow the viewport or get clipped by an ancestor. */
+/** Collects overflow and iOS-zoom problems on the current page. */
 const PROBE = `(() => {
   // Neutralise clipping so genuine overflow becomes measurable.
   document.documentElement.style.overflowX = 'visible';
@@ -177,20 +214,13 @@ const PROBE = `(() => {
   const overflowing = [];
   for (const el of document.querySelectorAll('body *')) {
     const cs = getComputedStyle(el);
-    // Horizontal scrollers are intentional; ignore them.
     if (cs.overflowX === 'auto' || cs.overflowX === 'scroll') continue;
     if (!el.clientWidth || el.scrollWidth <= el.clientWidth + 1) continue;
-    // Visually-hidden helpers (.sr-only) are deliberately 1px boxes holding a
-    // wider label, so they are not overflow.
+    // Visually-hidden helpers are deliberately 1px boxes holding a wider label.
     if (el.clientWidth <= 1 || el.clientHeight <= 1) continue;
     if (cs.clipPath && cs.clipPath !== 'none') continue;
     if (!el.textContent.trim()) continue;
-    overflowing.push({
-      el: label(el),
-      contentW: el.scrollWidth,
-      boxW: el.clientWidth,
-      text: text(el),
-    });
+    overflowing.push({ el: label(el), contentW: el.scrollWidth, boxW: el.clientWidth, text: text(el) });
   }
 
   return {
@@ -200,6 +230,15 @@ const PROBE = `(() => {
     offenderCount: offenders.length,
     overflowing: overflowing.slice(0, 5),
     overflowingCount: overflowing.length,
+    // iOS Safari zooms the page when a focused field's text is under 16px,
+    // which reads as the layout overflowing. Flag any such control.
+    smallControls: [...document.querySelectorAll('input, textarea, select')]
+      .filter((el) => {
+        const type = (el.getAttribute('type') || 'text').toLowerCase();
+        return !['checkbox', 'radio', 'file', 'submit', 'button', 'range', 'hidden'].includes(type);
+      })
+      .map((el) => ({ cls: String(el.className || '').slice(0, 24), font: parseFloat(getComputedStyle(el).fontSize) }))
+      .filter((c) => c.font < 16),
     body: (document.querySelector('#app')?.innerText || '').replace(/\\s+/g, ' ').trim(),
     errors: window.__vybzErrors || [],
   };
@@ -208,14 +247,12 @@ const PROBE = `(() => {
 async function main() {
   console.log(`\n=== VYBZ responsive test (${BASE}) ===\n`);
   const cookie = await session();
-  const chrome = await launch();
-  const t = await attach(BASE, cookie);
-
   const problems = [];
   let checks = 0;
 
-  try {
-    for (const route of ROUTES) {
+  /** Loads each route at every width and records any layout problem. */
+  const sweep = async (t, routes) => {
+    for (const route of routes) {
       for (const width of WIDTHS) {
         await t.send('Emulation.setDeviceMetricsOverride', {
           width,
@@ -223,8 +260,7 @@ async function main() {
           deviceScaleFactor: 1,
           mobile: width < 700,
         });
-        // A real navigation per route and width, so the SPA boots fresh and the
-        // session cookie is applied before the first render.
+        // A real navigation per route and width, so the SPA boots fresh.
         await t.send('Page.navigate', { url: `${BASE}${route.path}` });
         await wait(1500);
         const r = await t.evaluate(PROBE);
@@ -236,10 +272,14 @@ async function main() {
         if (route.expect && !r.body.includes(route.expect)) {
           reasons.push(`missing expected text "${route.expect}"`);
         }
+        if (r.smallControls.length) {
+          const worst = r.smallControls[0];
+          reasons.push(`${r.smallControls.length} input(s) under 16px (iOS zoom): ${worst.cls}=${worst.font}px`);
+        }
         if (r.errors.length) reasons.push(`console error: ${r.errors[0]}`);
 
         if (reasons.length) {
-          problems.push({ route: route.path, width, reasons, ...r });
+          problems.push({ route: route.path, width, reasons });
           console.log(`  FAIL  ${route.path} @${width}px`);
           for (const reason of reasons) console.log(`          ${reason}`);
           for (const o of r.offenders) {
@@ -253,8 +293,22 @@ async function main() {
         }
       }
     }
+  };
+
+  // Pass 1: public screens in a browser with no session.
+  const anon = await launch('anon');
+  try {
+    await sweep(await attach(anon.port, null), PUBLIC_ROUTES);
   } finally {
-    chrome.kill();
+    anon.kill();
+  }
+
+  // Pass 2: the app itself, authenticated, in a separate browser.
+  const auth = await launch('auth');
+  try {
+    await sweep(await attach(auth.port, cookie), ROUTES);
+  } finally {
+    auth.kill();
   }
 
   console.log(`\n=== RESPONSIVE: ${checks - problems.length} passed, ${problems.length} failed ===`);

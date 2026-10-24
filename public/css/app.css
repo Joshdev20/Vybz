@@ -110,6 +110,11 @@ p { margin: 0 0 var(--space-3); color: var(--text-2); }
 a { color: var(--violet); text-decoration: none; }
 a:hover { color: var(--purple); }
 button, input, textarea, select { font: inherit; color: inherit; }
+/* iOS Safari zooms the whole page when a focused field's text is under 16px,
+   which makes the layout appear to overflow. Keep text controls at 16px so a
+   control that forgets a class cannot reintroduce the zoom. */
+input:not([type='checkbox']):not([type='radio']):not([type='file']),
+textarea, select { font-size: 16px; }
 
 :focus-visible {
   outline: 2px solid var(--purple);
@@ -339,14 +344,18 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .field__error { font-size: 12.5px; color: #fca5a5; font-weight: 600; }
 
 .input, .textarea, .select {
-  width: 100%; padding: 12px 14px; border-radius: var(--radius-sm);
+  width: 100%; max-width: 100%; padding: 12px 14px; border-radius: var(--radius-sm);
   background: var(--bg-2); border: 1px solid var(--line); color: var(--text);
-  font-size: 15px; transition: border-color 0.16s, box-shadow 0.16s;
+  font-size: 16px; transition: border-color 0.16s, box-shadow 0.16s;
   min-height: 46px;
 }
 .input:focus, .textarea:focus, .select:focus {
   outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.16);
 }
+/* Safari gives text fields a native appearance with its own padding and radius,
+   which ignores the box model above. Normalise so the field stays inside its
+   container. `select` keeps its native control so the dropdown affordance stays. */
+.input, .textarea { appearance: none; -webkit-appearance: none; }
 .input::placeholder, .textarea::placeholder { color: var(--text-3); }
 .textarea { min-height: 92px; resize: vertical; line-height: 1.5; }
 .input[aria-invalid='true'], .textarea[aria-invalid='true'] { border-color: var(--red); }
